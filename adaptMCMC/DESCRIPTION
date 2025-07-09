@@ -9,7 +9,8 @@ Description: Enables sampling from arbitrary distributions if the log density is
 License: GPL (>= 2)
 LazyLoad: yes
 Depends: R (>= 2.14.1), parallel, coda, Matrix
-Imports: ramcmc
+Imports: ramcmc, geometry
+Remotes: shellyxie1/gmm
 URL: https://github.com/scheidan/adaptMCMC
 BugReports: https://github.com/scheidan/adaptMCMC/issues
 RoxygenNote: 7.1.1

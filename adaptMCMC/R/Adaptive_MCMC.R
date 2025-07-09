@@ -16,12 +16,22 @@
 
 MCMC <- function(p, n, init, scale=rep(1, length(init)),
                  adapt=!is.null(acc.rate), acc.rate=NULL, gamma=2/3, list=TRUE,
-                 showProgressBar=interactive(), n.start=0, ...) {
+                 showProgressBar=interactive(), n.start=0, 
+                 # New parameters for checking convex hull constraints (SX)
+                 use_convex_constraint = FALSE,
+                 moment_func = NULL, # need to specify g
+                 data.set = NULL,
+                 ...) {
 
   ## checks
   if(adapt & !is.numeric(acc.rate)) stop('Argument "acc.rate" is missing!')
   if(gamma<=0.5 | gamma>1) stop('Argument "gamma" must be in (0.5, 1]!')
 
+  ## checks for convex hull constraint (SX)
+  if(use_convex_constraint) {
+    if(is.null(moment_func)) stop('Argument "moment_func" is missing when use_convex_constraint=TRUE!')
+    if(!requireNamespace("geometry", quietly = TRUE)) stop('Package "geometry" is required for convex hull constraints!')
+  }
 
   ## number of adaption steps
   if(is.numeric(adapt)) n.adapt <- adapt
@@ -73,6 +83,9 @@ MCMC <- function(p, n, init, scale=rep(1, length(init)),
 
   S <-  t(chol(M))
 
+  # Initialized constraint rejections (SX)
+  constraint_rejections <- 0
+
   ## initialize progress bar
   cat('  generate', n, 'samples \n')
   if(showProgressBar){
@@ -106,21 +119,61 @@ MCMC <- function(p, n, init, scale=rep(1, length(init)),
 
     if(!is.finite(alpha)) alpha <- 0    # if zero divided by zero
 
+
     ## accept with P=alpha
-    if(runif(1)<alpha) {
-      X[i,] <- X.prop                   # accept
-      p.val[i] <- p.val.prop
-      if(returns.list) {
-        extras[[i]] <- extras.prop
+
+    # Check if runif(1) < alpha is true, which is the normal MH acceptance ratio, then we continue to check the
+    # convex hull constraint. If the convex hull constraint is satisfied, then we proceed to accept the new draw.
+    # Otherwise, we reject the new draw and stay the old draw. (SX)
+    mh_accept <- runif(1) < alpha
+
+    if(mh_accept) {
+      # Now, MH is accepted, we check the convex hull constraint
+      constraint_satisfied <- TRUE
+      if(use_convex_constraint){
+        # calculate moment conditions value with X.propose
+        gmat <- moment_func(X,prop, data.set)
+        
+        # create 0
+        z0 <- matrix(rep(0,ncol(gmat)),nrow=1,ncol=ncol(gmat))
+
+        # calculate convex hull
+        ch <- geometry::convhulln(gmat, options="FA")
+
+        # check if gmat includes the 0
+        constraint_satisfied <- geometry::inhulln(ch,z0) # gives TRUE or FALSE
+
+        # update the number of rejection
+        if(!constraint_satisfied){
+          constraint_rejections <- constraint_rejections + 1
+        }
       }
-      k <- k+1
+
+
+      # Now, MH is accepted and convex hull constrainted is accepted from the above, we record the new draw (SX)
+      if(constraint_satisfied){
+        X[i,] <- X.prop                   # accept (both MH and convex hull constraint are satisifed)
+        p.val[i] <- p.val.prop
+        if(returns.list) {
+          extras[[i]] <- extras.prop
+        }
+        k <- k+1
+      } else {
+        X[i,] <- X[i-1,]                  # reject (because convext hull constraint is not satisfied)
+        p.val[i] <- p.val[i-1]
+        if(returns.list) {
+          extras[[i]] <- extras[[i-1]]
+        }
+      }
     } else {
-      X[i,] <- X[i-1,]                  # or not
+      X[i,] <- X[i-1,]                  # reject (because MH is not accepted)
       p.val[i] <- p.val[i-1]
       if(returns.list) {
         extras[[i]] <- extras[[i-1]]
       }
     }
+
+
 
     ## compute new S
     ii <- i+n.start
@@ -130,7 +183,7 @@ MCMC <- function(p, n, init, scale=rep(1, length(init)),
       S <- ramcmc::adapt_S(S, U, alpha, ii, acc.rate, gamma)
 
     }
-  }
+  } # loop ends here
 
   if(showProgressBar){
     close(pb)                             # close progress bar
@@ -138,6 +191,12 @@ MCMC <- function(p, n, init, scale=rep(1, length(init)),
   
   ## calculate accpetance rate
   acceptance.rate <- round(k/(n-1), 3)
+
+  ## calculate convex hull rejetion rate (SX)
+  if(use_convex_constraint){
+    convexhull_rejection_rate <- round(constraint_rejections/(n-1), 3)
+    cat("Convex hull constraint rejection rate:", convexhull_rejection_rate, "\n")
+  }
 
   if(list) {
     res <- list(samples=X,
@@ -153,6 +212,13 @@ MCMC <- function(p, n, init, scale=rep(1, length(init)),
     if(returns.list) {
       res$extra.values = extras
     }
+
+    # add convex hull rejection rate in the return list (SX)
+    if(use_convex_constraint){
+      res$constraint.rejections <- constraint_rejections
+      res$constraint.rejection.rate <- convexhull_rejection_rate
+    }
+    
     return(res)
   } else {
     cat("Acceptance rate:", acceptance.rate, "\n")
