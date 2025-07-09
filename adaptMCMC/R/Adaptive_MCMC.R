@@ -132,7 +132,7 @@ MCMC <- function(p, n, init, scale=rep(1, length(init)),
       constraint_satisfied <- TRUE
       if(use_convex_constraint){
         # calculate moment conditions value with X.propose
-        gmat <- moment_func(X,prop, data.set)
+        gmat <- moment_func(X.prop, data.set)
         
         # create 0
         z0 <- matrix(rep(0,ncol(gmat)),nrow=1,ncol=ncol(gmat))
@@ -218,7 +218,7 @@ MCMC <- function(p, n, init, scale=rep(1, length(init)),
       res$constraint.rejections <- constraint_rejections
       res$constraint.rejection.rate <- convexhull_rejection_rate
     }
-    
+
     return(res)
   } else {
     cat("Acceptance rate:", acceptance.rate, "\n")
